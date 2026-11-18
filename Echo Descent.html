@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Echo Descent</title>
+<style>
+:root{--bg:#05070b;--ink:#dfe9e6;--dim:#7d8f8b;--acc:#9fd3c7;color-scheme:dark;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--ink);font-family:Georgia,"Times New Roman",serif;overflow:hidden;touch-action:none}
+canvas{position:fixed;inset:0;width:100%;height:100%;display:block}
+#hud{position:fixed;left:0;right:0;top:env(safe-area-inset-top,0px);padding:12px 18px;display:flex;justify-content:space-between;align-items:center;font-size:15px;pointer-events:none;color:var(--dim)}
+#bar{display:inline-block;vertical-align:middle;width:84px;height:4px;background:#1a2326;border-radius:2px;overflow:hidden;margin-left:8px}
+#fill{display:block;height:100%;width:0;background:#e0645a}
+#ov{position:fixed;inset:0;display:flex;flex-direction:column;justify-content:center;align-items:flex-start;padding:32px;background:rgba(5,7,11,.9);gap:16px;box-sizing:border-box}
+h1{font-size:44px;font-weight:400;font-style:italic;margin:0;letter-spacing:.5px;line-height:1.05}
+#sub{margin:0;color:var(--acc);font-size:18px}
+#how{margin:0;color:var(--dim);font-size:16px;line-height:1.55;max-width:34ch}
+button{font:inherit;font-size:18px;padding:13px 26px;border-radius:999px;border:1px solid var(--acc);background:transparent;color:var(--acc);cursor:pointer}
+button:focus-visible{outline:2px solid var(--ink);outline-offset:3px}
+#note{margin:0;font-size:13px;color:var(--dim);min-height:1em}
+</style></head><body>
+<canvas id="c"></canvas>
+<div id="hud"><span id="dm">0 m</span><span>stir<span id="bar"><span id="fill"></span></span></span></div>
+<div id="ov">
+<h1 id="t">Echo Descent</h1>
+<p id="sub">Descend in the dark. Let your voice light the way.</p>
+<p id="how">Clap, hum or whisper to send out sound. Tapping works too. Drag to steer. Louder sounds reveal more, but they wake what lives below.</p>
+<button id="go">Begin descent</button>
+<p id="note"></p>
+</div>
+<script>
+const cv=document.getElementById('c'),g=cv.getContext('2d');
+const dm=document.getElementById('dm'),fill=document.getElementById('fill'),ov=document.getElementById('ov'),note=document.getElementById('note');
+let W,H,DPR=1;
+function rs(){DPR=devicePixelRatio||1;W=innerWidth;H=innerHeight;cv.width=W*DPR;cv.height=H*DPR;g.setTransform(DPR,0,0,DPR,0,0)}
+addEventListener('resize',rs);rs();
+const GOAL=4000;
+const ZONES=[{n:'Cave',to:1200,c:'159,211,199'},{n:'Underground river',to:2800,c:'111,168,255'},{n:'Hidden city',to:1e9,c:'255,207,122'}];
+let depth=0,px=0,tx=0,stir=0,pulses=[],pts=[],run=false,cool=0,shake=0,flash=0,mic=null,last=0;
+const PY=()=>H*0.3;
+const cx=y=>W/2+Math.sin(y*.004)*W*.2+Math.sin(y*.011+2)*W*.08;
+const hw=y=>Math.max(52,W*.2-y*.012+Math.sin(y*.009)*14);
+const zone=()=>ZONES.find(z=>depth<z.to);
+function reset(){depth=0;px=W/2;tx=px;stir=0;pulses=[];pts=[];cool=0;shake=0;flash=0}
+function pulse(s){if(cool>0||!run)return;cool=.4;pulses.push({x:px,y:depth,r:0,R:130+s*260});stir+=.08+s*.22}
+async function initMic(){
+  try{
+    const s=await navigator.mediaDevices.getUserMedia({audio:true});
+    const ac=new(window.AudioContext||window.webkitAudioContext)();
+    const an=ac.createAnalyser();an.fftSize=512;
+    ac.createMediaStreamSource(s).connect(an);
+    mic={an,buf:new Float32Array(512)};return true;
+  }catch(e){return false}
+}
+function level(){
+  if(!mic)return 0;
+  mic.an.getFloatTimeDomainData(mic.buf);
+  let s=0;for(const v of mic.buf)s+=v*v;
+  return Math.sqrt(s/mic.buf.length);
+}
+function step(dt){
+  cool-=dt;shake=Math.max(0,shake-dt*2);flash=Math.max(0,flash-dt*2);
+  const l=level();if(l>.08)pulse(Math.min(1,(l-.08)*5));
+  depth+=dt*70;
+  px+=(tx-px)*Math.min(1,dt*10);
+  const L=cx(depth)-hw(depth)+9,R=cx(depth)+hw(depth)-9;
+  if(px<L||px>R){
+    const side=px<L?-1:1;px=Math.min(R,Math.max(L,px));
+    depth=Math.max(0,depth-dt*140);flash=Math.max(flash,.5);
+    pts.push({x:cx(depth)+side*hw(depth),y:depth,a:.7});
+  }
+  const y0=depth-PY()-10,y1=depth+H-PY()+10;
+  for(const p of pulses){
+    const old=p.r;p.r+=dt*320;
+    const a=Math.max(y0,p.y-p.r,0),b=Math.min(y1,p.y+p.r);
+    for(let y=Math.floor(a/6)*6;y<b;y+=6)for(const s of[-1,1]){
+      const x=cx(y)+s*hw(y),d=Math.hypot(x-p.x,y-p.y);
+      if(d>old&&d<=p.r)pts.push({x,y,a:1-.6*p.r/p.R});
+    }
+  }
+  pulses=pulses.filter(p=>p.r<p.R);
+  for(const p of pts)p.a-=dt*.22;
+  pts=pts.filter(p=>p.a>.02&&p.y>y0).slice(-3500);
+  stir=Math.max(0,stir-dt*.12);
+  if(stir>=1){stir=.3;depth=Math.max(0,depth-100);shake=1;flash=1}
+  if(depth>=GOAL)end(true);
+}
+function draw(){
+  g.fillStyle='#05070b';g.fillRect(0,0,W,H);
+  const c=zone().c,off=PY()-depth;
+  g.save();
+  if(shake>0)g.translate((Math.random()-.5)*8*shake,(Math.random()-.5)*8*shake);
+  for(const p of pts){g.fillStyle='rgba('+c+','+Math.max(0,p.a)+')';g.beginPath();g.arc(p.x,p.y+off,2.6,0,6.3);g.fill()}
+  for(const p of pulses){g.strokeStyle='rgba('+c+','+.35*(1-p.r/p.R)+')';g.lineWidth=1.5;g.beginPath();g.arc(p.x,p.y+off,p.r,0,6.3);g.stroke()}
+  const gr=g.createRadialGradient(px,PY(),0,px,PY(),30);
+  gr.addColorStop(0,'rgba('+c+',.6)');gr.addColorStop(1,'rgba('+c+',0)');
+  g.fillStyle=gr;g.beginPath();g.arc(px,PY(),30,0,6.3);g.fill();
+  g.fillStyle='#fff';g.beginPath();g.arc(px,PY(),4,0,6.3);g.fill();
+  if(flash>0){g.fillStyle='rgba(224,100,90,'+flash*.18+')';g.fillRect(0,0,W,H)}
+  g.restore();
+  dm.textContent=Math.floor(depth/20)+' m \u00b7 '+zone().n;
+  fill.style.width=Math.min(100,stir*100)+'%';
+}
+function loop(t){
+  const dt=Math.min(.05,(t-last)/1000);last=t;
+  if(run)step(dt);
+  draw();requestAnimationFrame(loop);
+}
+function end(win){
+  run=false;
+  document.getElementById('t').textContent=win?'You reached the hidden city':'Echo Descent';
+  document.getElementById('sub').textContent=win?'200 m down, guided only by sound.':'Descend in the dark. Let your voice light the way.';
+  document.getElementById('go').textContent='Descend again';
+  ov.style.display='flex';
+}
+let micTried=false;
+document.getElementById('go').onclick=async()=>{
+  if(!micTried){
+    micTried=true;
+    const ok=await initMic();
+    note.textContent=ok?'Microphone on. Make some noise.':'Microphone off. Tap the screen to echo instead.';
+  }
+  reset();ov.style.display='none';run=true;last=performance.now();
+};
+cv.addEventListener('pointerdown',e=>{tx=e.clientX;pulse(.35)});
+cv.addEventListener('pointermove',e=>{if(e.buttons||e.pointerType==='touch')tx=e.clientX});
+addEventListener('keydown',e=>{
+  if(e.code==='Space')pulse(.4);
+  if(e.code==='ArrowLeft')tx-=40;
+  if(e.code==='ArrowRight')tx+=40;
+});
+reset();requestAnimationFrame(loop);
+</script></body></html>
